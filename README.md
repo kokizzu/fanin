@@ -2,7 +2,7 @@
 # FanIn
 
 A library similar to [ch-timed-buffer](//github.com/kokizzu/ch-timed-buffer), 
-used to wait synchronization of multiple goroutines. The difference is that this one can notify the caller when it's done flushing using callback or channel, database-agnostics, and no double buffering (so slow flush function might have effect).
+used to wait synchronization of multiple goroutines (`pond` can be used to fan-out, this library used to synchronize fan-in, so just like inverse of wait-group). The difference is that this one can notify the caller when it's done flushing using callback or channel, database-agnostics, and no double buffering (so slow flush function might have effect).
 
 So something like this:
 

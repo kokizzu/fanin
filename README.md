@@ -29,6 +29,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/alitto/pond"
 	"github.com/kokizzu/fanin"
@@ -63,4 +64,21 @@ func main() {
 	<-done
 	fmt.Println("total flushed: ", waiter.TotalFlushed)
 }
+```
+
+output:
+
+```
+FanIn[int].flush: 1000
+FanIn[int].flush: 1000
+FanIn[int].flush: 1000
+FanIn[int].flush: 1000
+FanIn[int].flush: 1000
+FanIn[int].flush: 1000
+FanIn[int].flush: 1000
+FanIn[int].flush: 1000
+FanIn[int].flush: 1000
+FanIn[int].flush: 1000
+FanIn[int].flush: 203
+total flushed:  10203
 ```

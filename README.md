@@ -40,7 +40,7 @@ func main() {
 	done := make(chan bool)
 
 	const workerCount = 1000
-	waiter := fanin.NewFanIn[int](workerCount, func(v []int) {
+	waiter := fanin.NewFanIn[int](workerCount, 1 * time.Second, func(v []int) {
 		fmt.Printf("FanIn[%T].flush: %v\n", v[0], len(v))
 	})
 	go waiter.ProcessLoop(ctx)

@@ -30,7 +30,7 @@ func TestFanIn(t *testing.T) {
 
 	// main logic
 	const workerCount = 1000
-	waiter := NewFanIn[int](workerCount, func(v []int) {
+	waiter := NewFanIn[int](workerCount, 500*time.Millisecond, func(v []int) {
 		fmt.Printf("FanIn[%T].flush: %v\n", v[0], len(v))
 	})
 	go waiter.ProcessLoop(ctx)

@@ -5,24 +5,32 @@ import (
 	"time"
 )
 
-func NewFanIn[T any](n int, flushFunc func([]T)) *FanIn[T] {
+func NewFanIn[T any](n int, tickDuration time.Duration, flushFunc func([]T)) *FanIn[T] {
 	return &FanIn[T]{
-		queue:       make(chan DataAndCallback[T], n),
-		writeStream: make([]T, 0, n),
-		callbacks:   make([]func(), 0, n),
-		flushFunc:   flushFunc,
+		queue:        make(chan DataAndCallback[T], n),
+		writeStream:  make([]T, 0, n),
+		callbacks:    make([]func(), 0, n),
+		flushFunc:    flushFunc,
+		tickDuration: tickDuration,
 	}
 }
 
 type FanIn[T any] struct {
+	// write queue so no deadlock
 	queue chan DataAndCallback[T]
 
+	// maximum duration before automatically flush
+	tickDuration time.Duration
+
+	// list of items to be processed, and callbacks
 	writeStream []T
 	callbacks   []func()
 
 	// just for statistsics
 	TotalFlushed uint64
-	flushFunc    func([]T)
+
+	// function that will called when it's time to flush
+	flushFunc func([]T)
 }
 
 type DataAndCallback[T any] struct {
@@ -32,7 +40,7 @@ type DataAndCallback[T any] struct {
 
 func (w *FanIn[T]) ProcessLoop(ctx context.Context) {
 
-	tick := time.NewTicker(1 * time.Second)
+	tick := time.NewTicker(w.tickDuration)
 
 mainLoop:
 	for { // synchronize writer and flusher

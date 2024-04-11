@@ -2,17 +2,19 @@
 # FanIn
 
 A library similar to [ch-timed-buffer](//github.com/kokizzu/ch-timed-buffer), 
-used to wait synchronization of multiple goroutines.
+used to wait synchronization of multiple goroutines. The difference is that this one is database agnostics (callback-based) and no double buffering (so slow flush function might have effect).
 
 So something like this:
 
 ```
+# enqueue things to write
 goroutine1 -> writer
 goroutine2 -> writer
 goroutine3 -> writer
 
-writer done flushing all 3
-  
+# writer done flushing all 3
+
+# notify back the callers
 writer -> goroutine1   
 writer -> goroutine2
 writer -> goroutine3  

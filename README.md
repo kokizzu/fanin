@@ -42,8 +42,9 @@ func main() {
 	done := make(chan bool)
 
 	const workerCount = 1000
-	waiter := fanin.NewFanIn[int](workerCount, 1 * time.Second, func(v []int) {
+	waiter := fanin.NewFanIn[int](workerCount, 1 * time.Second, func(v []int) error {
 		fmt.Printf("FanIn[%T].flush: %v\n", v[0], len(v))
+		return nil // no error when flushing
 	})
 	go waiter.ProcessLoop(ctx)
 
@@ -55,7 +56,11 @@ func main() {
 			z := z
 			workerPool.Submit(func() { // assuming this is goroutine of queue/pubsub/msgbroker client
 				// preprocessing here
-				<-waiter.SubmitWaitChan(z)
+				err := <-waiter.SubmitWaitChan(z)
+				if err != nil {
+					// handle error here
+					return
+                }
 				// ack the event here
 			})
 		}
@@ -64,7 +69,7 @@ func main() {
 	}()
 
 	<-done
-	fmt.Println("total flushed: ", waiter.TotalFlushed)
+	fmt.Println("total flushed: ", waiter.TotalFlushSucceed)
 }
 ```
 

@@ -30,8 +30,9 @@ func TestFanIn(t *testing.T) {
 
 	// main logic
 	const workerCount = 1000
-	waiter := NewFanIn[int](workerCount, 500*time.Millisecond, func(v []int) {
+	waiter := NewFanIn[int](workerCount, 500*time.Millisecond, func(v []int) error {
 		fmt.Printf("FanIn[%T].flush: %v\n", v[0], len(v))
+		return nil
 	})
 	go waiter.ProcessLoop(ctx)
 
@@ -43,7 +44,10 @@ func TestFanIn(t *testing.T) {
 			z := z
 			workerPool.Submit(func() { // assuming this is goroutine of queue/pubsub/msgbroker client
 				// preprocessing here
-				<-waiter.SubmitWaitChan(z)
+				err := <-waiter.SubmitWaitChan(z)
+				if err != nil {
+					t.Errorf("SubmitWaitChan error: %v", err)
+				}
 				// ack the event here
 			})
 		}
@@ -54,9 +58,12 @@ func TestFanIn(t *testing.T) {
 	fmt.Println("awaiting signal")
 	<-done
 	fmt.Println("exiting")
-	fmt.Println("total flushed: ", waiter.TotalFlushed)
+	fmt.Println("total flushed: ", waiter.TotalFlushSucceed)
 
-	if waiter.TotalFlushed != 10203 {
-		t.Errorf("TotalFlushed want %d got %d", 10203, waiter.TotalFlushed)
+	if waiter.TotalFlushSucceed != 10203 {
+		t.Errorf("TotalFlushSucceed want %d got %d", 10203, waiter.TotalFlushSucceed)
+	}
+	if waiter.TotalFlushFailed != 0 {
+		t.Errorf("TotalFlushFailed want %d got %d", 0, waiter.TotalFlushFailed)
 	}
 }

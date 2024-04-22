@@ -51,7 +51,9 @@ mainLoop:
 		case v := <-w.queue:
 			w.writeStream = append(w.writeStream, v.data)
 			w.callbacks = append(w.callbacks, v.callback)
-			w.flush(false)
+			if w.flush(false) {
+				tick.Reset(w.tickDuration)
+			}
 		case <-ctx.Done():
 			w.flush(true)
 			break mainLoop
@@ -71,12 +73,12 @@ func (w *FanIn[T]) SubmitWaitChan(z T) chan error {
 	return isDataFlushed
 }
 
-func (w *FanIn[T]) flush(force bool) {
+func (w *FanIn[T]) flush(force bool) bool {
 	if len(w.callbacks) == 0 { // nothing to flush
-		return
+		return false
 	}
 	if !force && len(w.callbacks) < cap(w.callbacks) { // not yet time to flush, data too small
-		return
+		return false
 	}
 	err := w.flushFunc(w.writeStream)
 	if err != nil {
@@ -92,4 +94,5 @@ func (w *FanIn[T]) flush(force bool) {
 	// clear the stream
 	w.writeStream = w.writeStream[:0]
 	w.callbacks = w.callbacks[:0]
+	return true
 }

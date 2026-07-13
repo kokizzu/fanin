@@ -26,7 +26,7 @@ type FanIn[T any] struct {
 	writeStream []T
 	callbacks   []func(error)
 
-	// just for statistsics
+	// just for statistics
 	TotalFlushSucceed uint64
 	TotalFlushFailed  uint64
 
@@ -42,6 +42,7 @@ type DataAndCallback[T any] struct {
 func (w *FanIn[T]) ProcessLoop(ctx context.Context) {
 
 	tick := time.NewTicker(w.tickDuration)
+	defer tick.Stop()
 
 mainLoop:
 	for { // synchronize writer and flusher

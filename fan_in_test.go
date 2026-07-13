@@ -2,127 +2,145 @@ package fanin
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"os"
-	"os/signal"
-	"syscall"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/alitto/pond"
 )
 
-func TestFanIn(t *testing.T) {
+func TestFanInFlushesFullBatches(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 
-	// capturing ctrl+C
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-	done := make(chan bool, 1)
-	// goroutine to capture signal
-	go func() {
-		sig := <-sigs
-		fmt.Println()
-		fmt.Println(sig)
-		cancel()
-		done <- true
-	}()
+	const batchSize = 64
+	const eventsCount = 256
 
-	// main logic
-	const workerCount = 1000
-	waiter := NewFanIn[int](workerCount, 500*time.Millisecond, func(v []int) error {
-		fmt.Printf("FanIn[%T].flush: %v\n", v[0], len(v))
+	var flushCount atomic.Uint64
+	waiter := NewFanIn[int](batchSize, time.Second, func(v []int) error {
+		if len(v) == 0 {
+			return errors.New("empty flush")
+		}
+		if len(v) > batchSize {
+			return fmt.Errorf("flush batch too large: %d", len(v))
+		}
+		flushCount.Add(1)
 		return nil
 	})
-	go waiter.ProcessLoop(ctx)
 
-	// max queue/worker will filled first before tick reached
-	const EventsCount = 10_203
+	processDone := runFanIn(ctx, waiter)
 
-	workerPool := pond.New(workerCount, EventsCount)
-	go func() {
-		for z := EventsCount; z > 0; z-- { // assuming there's at least 10K items to be written
-			z := z
-			workerPool.Submit(func() { // assuming this is goroutine of queue/pubsub/msgbroker client
-				// preprocessing here
-				err := <-waiter.SubmitWaitChan(z)
-				if err != nil {
-					t.Errorf("SubmitWaitChan error: %v", err)
-				}
-				// ack the event here
-			})
-		}
-		workerPool.StopAndWaitFor(5 * time.Second)
-		done <- true
-	}()
+	var wg sync.WaitGroup
+	wg.Add(eventsCount)
+	for z := 0; z < eventsCount; z++ {
+		z := z
+		go func() {
+			defer wg.Done()
+			if err := <-waiter.SubmitWaitChan(z); err != nil {
+				t.Errorf("SubmitWaitChan error: %v", err)
+			}
+		}()
+	}
+	waitFor(t, waitGroupDone(&wg), time.Second)
 
-	fmt.Println("awaiting signal")
-	<-done
-	fmt.Println("exiting")
-	fmt.Println("total flushed: ", waiter.TotalFlushSucceed)
+	cancel()
+	waitFor(t, processDone, time.Second)
 
-	if waiter.TotalFlushSucceed != EventsCount {
-		t.Errorf("TotalFlushSucceed want %d got %d", EventsCount, waiter.TotalFlushSucceed)
+	if waiter.TotalFlushSucceed != eventsCount {
+		t.Fatalf("TotalFlushSucceed want %d got %d", eventsCount, waiter.TotalFlushSucceed)
 	}
 	if waiter.TotalFlushFailed != 0 {
-		t.Errorf("TotalFlushFailed want %d got %d", 0, waiter.TotalFlushFailed)
+		t.Fatalf("TotalFlushFailed want 0 got %d", waiter.TotalFlushFailed)
+	}
+	if flushCount.Load() == 0 {
+		t.Fatal("expected at least one flush")
 	}
 }
 
-func TestWaitForTick(t *testing.T) {
+func TestFanInFlushesOnTick(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 
-	// capturing ctrl+C
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-	done := make(chan bool, 1)
-	// goroutine to capture signal
-	go func() {
-		sig := <-sigs
-		fmt.Println()
-		fmt.Println(sig)
-		cancel()
-		done <- true
-	}()
+	const eventsCount = 5
 
-	// main logic
-	const workerCount = 1000
-	waiter := NewFanIn[int](workerCount, 20*time.Millisecond, func(v []int) error {
-		fmt.Printf("FanIn[%T].flush: %v\n", v[0], len(v))
+	var flushCount atomic.Uint64
+	waiter := NewFanIn[int](16, 10*time.Millisecond, func(v []int) error {
+		if len(v) == 0 {
+			return errors.New("empty flush")
+		}
+		flushCount.Add(1)
 		return nil
 	})
-	go waiter.ProcessLoop(ctx)
 
-	// tick will reached first before 1000 queue filled, so flush will only around ~20
-	const EventsCount = 203
+	processDone := runFanIn(ctx, waiter)
 
-	workerPool := pond.New(workerCount, EventsCount)
-	go func() {
-		for z := EventsCount; z > 0; z-- { // assuming there's at least 10K items to be written
-			z := z
-			time.Sleep(1 * time.Millisecond)
-			workerPool.Submit(func() { // assuming this is goroutine of queue/pubsub/msgbroker client
-				// preprocessing here
-				err := <-waiter.SubmitWaitChan(z)
-				if err != nil {
-					t.Errorf("SubmitWaitChan error: %v", err)
-				}
-				// ack the event here
-			})
+	for z := 0; z < eventsCount; z++ {
+		if err := <-waiter.SubmitWaitChan(z); err != nil {
+			t.Fatalf("SubmitWaitChan error: %v", err)
 		}
-		workerPool.StopAndWaitFor(5 * time.Second)
-		done <- true
-	}()
-
-	fmt.Println("awaiting signal")
-	<-done
-	fmt.Println("exiting")
-	fmt.Println("total flushed: ", waiter.TotalFlushSucceed)
-
-	if waiter.TotalFlushSucceed != EventsCount {
-		t.Errorf("TotalFlushSucceed want %d got %d", EventsCount, waiter.TotalFlushSucceed)
 	}
-	if waiter.TotalFlushFailed != 0 {
-		t.Errorf("TotalFlushFailed want %d got %d", 0, waiter.TotalFlushFailed)
+
+	cancel()
+	waitFor(t, processDone, time.Second)
+
+	if waiter.TotalFlushSucceed != eventsCount {
+		t.Fatalf("TotalFlushSucceed want %d got %d", eventsCount, waiter.TotalFlushSucceed)
+	}
+	if flushCount.Load() != eventsCount {
+		t.Fatalf("tick flush count want %d got %d", eventsCount, flushCount.Load())
+	}
+}
+
+func TestFanInPropagatesFlushFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	wantErr := errors.New("flush failed")
+	waiter := NewFanIn[int](1, time.Second, func(v []int) error {
+		return wantErr
+	})
+
+	processDone := runFanIn(ctx, waiter)
+
+	if err := <-waiter.SubmitWaitChan(42); !errors.Is(err, wantErr) {
+		t.Fatalf("SubmitWaitChan error want %v got %v", wantErr, err)
+	}
+
+	cancel()
+	waitFor(t, processDone, time.Second)
+
+	if waiter.TotalFlushSucceed != 0 {
+		t.Fatalf("TotalFlushSucceed want 0 got %d", waiter.TotalFlushSucceed)
+	}
+	if waiter.TotalFlushFailed != 1 {
+		t.Fatalf("TotalFlushFailed want 1 got %d", waiter.TotalFlushFailed)
+	}
+}
+
+func runFanIn[T any](ctx context.Context, waiter *FanIn[T]) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		waiter.ProcessLoop(ctx)
+	}()
+	return done
+}
+
+func waitGroupDone(wg *sync.WaitGroup) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		wg.Wait()
+	}()
+	return done
+}
+
+func waitFor(t *testing.T, done <-chan struct{}, timeout time.Duration) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		t.Fatalf("timed out after %s", timeout)
 	}
 }

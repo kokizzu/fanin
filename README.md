@@ -31,15 +31,15 @@ package main
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
-	"github.com/alitto/pond"
 	"github.com/kokizzu/fanin"
 )
 
 func main() {
-	ctx := context.Background()
-	done := make(chan bool)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	const workerCount = 1000
 	waiter := fanin.NewFanIn[int](workerCount, 1 * time.Second, func(v []int) error {
@@ -50,25 +50,25 @@ func main() {
 
 	const EventsCount = 10_203
 
-	workerPool := pond.New(workerCount, EventsCount)
-	go func() {
-		for z := EventsCount; z > 0; z-- { // assuming there's at least 10K items to be written
-			z := z
-			workerPool.Submit(func() { // assuming this is goroutine of queue/pubsub/msgbroker client
-				// preprocessing here
-				err := <-waiter.SubmitWaitChan(z)
-				if err != nil {
-					// handle error here
-					return
-                }
-				// ack the event here
-			})
-		}
-		workerPool.StopAndWaitFor(5 * time.Second)
-		done <- true
-	}()
-
-	<-done
+	var wg sync.WaitGroup
+	workerLimit := make(chan struct{}, workerCount)
+	for z := EventsCount; z > 0; z-- { // assuming there's at least 10K items to be written
+		z := z
+		workerLimit <- struct{}{}
+		wg.Add(1)
+		go func() { // assuming this is goroutine of queue/pubsub/msgbroker client
+			defer wg.Done()
+			defer func() { <-workerLimit }()
+			// preprocessing here
+			err := <-waiter.SubmitWaitChan(z)
+			if err != nil {
+				// handle error here
+				return
+			}
+			// ack the event here
+		}()
+	}
+	wg.Wait()
 	fmt.Println("total flushed: ", waiter.TotalFlushSucceed)
 }
 ```
@@ -89,3 +89,10 @@ FanIn[int].flush: 1000
 FanIn[int].flush: 203
 total flushed:  10203
 ```
+
+## Maintenance checklist
+
+- [x] Go runtime updated to 1.26.5.
+- [x] Removed unnecessary external test dependency; the module is dependency-free.
+- [x] `make test` covers full-batch flushing, tick flushing, and flush error propagation.
+- [x] `make verify-dependency-security` and `make vulncheck` check dependency security.
